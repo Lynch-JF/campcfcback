@@ -5,7 +5,8 @@ const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Las firmas van en base64 dentro del JSON, así que subimos el límite por defecto (1mb)
+app.use(express.json({ limit: "5mb" }));
 
 const CUPO_TOTAL = parseInt(process.env.CUPO_TOTAL || "120", 10);
 
@@ -91,8 +92,11 @@ app.get("/api/inscripciones", async (req, res) => {
 });
 
 /* ===========================================================
-   EVALUACIONES DE PERSONAL (nuevo)
+   EVALUACIONES DE PERSONAL
    =========================================================== */
+
+// Categorías válidas — deben coincidir con el CHECK constraint de la tabla
+const CATEGORIAS_VALIDAS = ["Muy deficiente", "Deficiente", "Regular", "Bueno", "Excelente"];
 
 // Crea una nueva evaluación finalizada
 app.post("/api/evaluaciones", async (req, res) => {
@@ -100,8 +104,8 @@ app.post("/api/evaluaciones", async (req, res) => {
     id,
     puesto,
     nombre,
+    tienda,
     cargo,
-    departamento,
     periodo,
     evaluador,
     fecha,
@@ -111,11 +115,26 @@ app.post("/api/evaluaciones", async (req, res) => {
     puntajePonderado,
     puntajeEntero,
     categoria,
+    firmaEvaluador,
+    firmaColaborador,
   } = req.body;
 
   // Validación básica de campos obligatorios
   if (!puesto || !nombre) {
     return res.status(400).json({ error: "Falta el campo requerido: puesto o nombre" });
+  }
+
+  // Validación de integridad: si viene puntajeEntero o categoría, deben ser válidos
+  // (además de las validaciones de la BD, esto da un mensaje claro antes de golpear Postgres)
+  if (
+    puntajeEntero !== undefined &&
+    puntajeEntero !== null &&
+    (puntajeEntero < 1 || puntajeEntero > 5)
+  ) {
+    return res.status(400).json({ error: "puntajeEntero debe estar entre 1 y 5" });
+  }
+  if (categoria && !CATEGORIAS_VALIDAS.includes(categoria)) {
+    return res.status(400).json({ error: "categoria no reconocida" });
   }
 
   try {
@@ -124,8 +143,8 @@ app.post("/api/evaluaciones", async (req, res) => {
         id,
         puesto,
         nombre,
+        tienda: tienda || null,
         cargo: cargo || null,
-        departamento: departamento || null,
         periodo: periodo || null,
         evaluador: evaluador || null,
         fecha: fecha || null,
@@ -135,10 +154,21 @@ app.post("/api/evaluaciones", async (req, res) => {
         puntaje_ponderado: puntajePonderado,
         puntaje_entero: puntajeEntero,
         categoria: categoria || null,
+        firma_evaluador: firmaEvaluador || null,
+        firma_colaborador: firmaColaborador || null,
+        // enviada_el NO se manda: la BD la pone sola con default now(),
+        // así no dependemos del reloj del celular/navegador del evaluador.
       },
     ]);
 
     if (insertError) {
+      // 23505 = violación de UNIQUE (ya existe una evaluación para ese
+      // empleado + tienda + período — ver constraint uq_eval_periodo)
+      if (insertError.code === "23505") {
+        return res.status(409).json({
+          error: "Ya existe una evaluación registrada para este empleado en este período.",
+        });
+      }
       console.error("Error de Supabase:", insertError);
       return res.status(500).json({ error: "No se pudo guardar la evaluación." });
     }
@@ -151,11 +181,16 @@ app.post("/api/evaluaciones", async (req, res) => {
 });
 
 // Lista todas las evaluaciones (panel de Gestión Humana)
+// Soporta filtros opcionales por querystring: ?tienda=...&puesto=...
 app.get("/api/evaluaciones", async (req, res) => {
-  const { data, error } = await supabase
-    .from("evaluaciones")
-    .select("*")
-    .order("enviada_el", { ascending: false });
+  const { tienda, puesto } = req.query;
+
+  let query = supabase.from("evaluaciones").select("*").order("enviada_el", { ascending: false });
+
+  if (tienda) query = query.eq("tienda", tienda);
+  if (puesto) query = query.eq("puesto", puesto);
+
+  const { data, error } = await query;
 
   if (error) {
     console.error(error);

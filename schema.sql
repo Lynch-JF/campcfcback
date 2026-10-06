@@ -33,6 +33,7 @@ create table if not exists evaluaciones (
   fecha date,
   fortalezas text,
   mejoras text,
+  comentarios_evaluado text,
   respuestas jsonb not null default '{}'::jsonb,
   puntaje_ponderado double precision,
   puntaje_entero integer check (puntaje_entero between 1 and 5),
@@ -43,5 +44,8 @@ create table if not exists evaluaciones (
   -- una sola evaluación por empleado, tienda y período
   constraint uq_eval_periodo unique (tienda, nombre, periodo)
 );
+
+-- Para bases ya creadas: agrega la columna de comentarios del colaborador evaluado
+alter table evaluaciones add column if not exists comentarios_evaluado text;
 
 create index if not exists idx_eval_tienda_periodo on evaluaciones (tienda, periodo);

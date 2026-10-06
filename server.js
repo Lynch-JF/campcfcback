@@ -98,7 +98,7 @@ const CATEGORIAS_VALIDAS = ["Muy deficiente", "Deficiente", "Regular", "Bueno", 
 app.post("/api/evaluaciones", async (req, res) => {
   const {
     id, puesto, nombre, tienda, cargo, periodo, evaluador, fecha,
-    fortalezas, mejoras, respuestas,
+    fortalezas, mejoras, comentariosEvaluado, respuestas,
     puntajePonderado, puntajeEntero, categoria,
     firmaEvaluador, firmaColaborador,
   } = req.body || {};
@@ -122,8 +122,8 @@ app.post("/api/evaluaciones", async (req, res) => {
          (id, puesto, nombre, tienda, cargo, periodo, evaluador, fecha,
           fortalezas, mejoras, respuestas,
           puntaje_ponderado, puntaje_entero, categoria,
-          firma_evaluador, firma_colaborador)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)`,
+          firma_evaluador, firma_colaborador, comentarios_evaluado)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17)`,
       [
         String(id), puesto, nombre, tienda, cargo || null, periodo,
         evaluador || null, fecha || null,
@@ -131,6 +131,7 @@ app.post("/api/evaluaciones", async (req, res) => {
         JSON.stringify(respuestas || {}),
         puntajePonderado ?? null, puntajeEntero ?? null, categoria || null,
         firmaEvaluador || null, firmaColaborador || null,
+        comentariosEvaluado || null,
         // enviada_el la pone la BD con default now()
       ]
     );

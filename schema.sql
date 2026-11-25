@@ -62,6 +62,13 @@ create table if not exists personal_tiendas (
   actualizado_el timestamp with time zone default now()
 );
 
+-- Ajustes sueltos del personal (p. ej. evaluador_admin: quien evalúa a los administradores).
+create table if not exists ajustes_personal (
+  clave text primary key,
+  valor text,
+  actualizado_el timestamp with time zone default now()
+);
+
 create table if not exists firmas_personal (
   nombre text primary key,
   imagen text not null,

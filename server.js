@@ -210,19 +210,25 @@ const FIRMA_VALIDA = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
 const FIRMA_MAX = 1500000;
 
 // Lista de tiendas, evaluadores y empleados. Pública: la ficha la necesita sin contraseña.
+// evaluadorAdmin es quien evalúa a los administradores (null = el que trae la ficha).
 app.get("/api/personal", async (req, res) => {
   try {
     const { rows } = await pool.query(
       "select tienda, evaluador, auxiliares from personal_tiendas order by orden, tienda"
     );
-    return res.json({ configurado: rows.length > 0, tiendas: rows });
+    const ajuste = await pool.query("select valor from ajustes_personal where clave = 'evaluador_admin'");
+    return res.json({
+      configurado: rows.length > 0,
+      tiendas: rows,
+      evaluadorAdmin: ajuste.rows[0] ? ajuste.rows[0].valor : null,
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "No se pudo obtener el personal." });
   }
 });
 
-// Reemplaza la lista completa. Body: { tiendas: [{ tienda, evaluador, auxiliares: [] }] }
+// Reemplaza la lista completa. Body: { tiendas: [{ tienda, evaluador, auxiliares: [] }], evaluadorAdmin? }
 app.put("/api/personal", soloAdminEscritura, async (req, res) => {
   const lista = req.body && req.body.tiendas;
   if (!Array.isArray(lista) || !lista.length) {
@@ -240,6 +246,8 @@ app.put("/api/personal", soloAdminEscritura, async (req, res) => {
     )];
     limpias.push({ tienda, evaluador: limpiarNombre(t.evaluador) || null, auxiliares });
   }
+  const cambiaAdmin = req.body.evaluadorAdmin !== undefined;
+  const evaluadorAdmin = limpiarNombre(req.body.evaluadorAdmin) || null;
 
   const client = await pool.connect();
   try {
@@ -252,8 +260,16 @@ app.put("/api/personal", soloAdminEscritura, async (req, res) => {
         [t.tienda, t.evaluador, JSON.stringify(t.auxiliares), i]
       );
     }
+    if (cambiaAdmin) {
+      await client.query(
+        `insert into ajustes_personal (clave, valor) values ('evaluador_admin', $1)
+         on conflict (clave) do update set valor = excluded.valor, actualizado_el = now()`,
+        [evaluadorAdmin]
+      );
+    }
     await client.query("commit");
-    return res.json({ ok: true, tiendas: limpias });
+    const ajuste = await pool.query("select valor from ajustes_personal where clave = 'evaluador_admin'");
+    return res.json({ ok: true, tiendas: limpias, evaluadorAdmin: ajuste.rows[0] ? ajuste.rows[0].valor : null });
   } catch (err) {
     await client.query("rollback").catch(() => {});
     console.error(err);

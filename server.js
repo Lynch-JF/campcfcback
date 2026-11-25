@@ -192,6 +192,134 @@ app.get("/api/evaluaciones", soloAdmin, async (req, res) => {
 });
 
 /* ===========================================================
+   PERSONAL POR TIENDA Y FIRMAS (Panel de Gestión Humana)
+   =========================================================== */
+
+// Para editar, ADMIN_KEY es obligatoria: sin ella las rutas de escritura no quedan abiertas.
+function soloAdminEscritura(req, res, next) {
+  if (!ADMIN_KEY) {
+    return res.status(503).json({ error: "Define ADMIN_KEY en el servidor para poder editar el personal." });
+  }
+  if (req.get("x-admin-key") === ADMIN_KEY) return next();
+  return res.status(401).json({ error: "No autorizado." });
+}
+
+// Los nombres se guardan como en la ficha: en mayúsculas y sin espacios de más.
+const limpiarNombre = (v) => String(v ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+const FIRMA_VALIDA = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+const FIRMA_MAX = 1500000;
+
+// Lista de tiendas, evaluadores y empleados. Pública: la ficha la necesita sin contraseña.
+app.get("/api/personal", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "select tienda, evaluador, auxiliares from personal_tiendas order by orden, tienda"
+    );
+    return res.json({ configurado: rows.length > 0, tiendas: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "No se pudo obtener el personal." });
+  }
+});
+
+// Reemplaza la lista completa. Body: { tiendas: [{ tienda, evaluador, auxiliares: [] }] }
+app.put("/api/personal", soloAdminEscritura, async (req, res) => {
+  const lista = req.body && req.body.tiendas;
+  if (!Array.isArray(lista) || !lista.length) {
+    return res.status(400).json({ error: "Envía al menos una tienda." });
+  }
+  const vistas = new Set();
+  const limpias = [];
+  for (const t of lista) {
+    const tienda = limpiarNombre(t && t.tienda);
+    if (!tienda) return res.status(400).json({ error: "Hay una tienda sin nombre." });
+    if (vistas.has(tienda)) return res.status(400).json({ error: `La tienda ${tienda} está repetida.` });
+    vistas.add(tienda);
+    const auxiliares = [...new Set(
+      (Array.isArray(t.auxiliares) ? t.auxiliares : []).map(limpiarNombre).filter(Boolean)
+    )];
+    limpias.push({ tienda, evaluador: limpiarNombre(t.evaluador) || null, auxiliares });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("delete from personal_tiendas");
+    for (const [i, t] of limpias.entries()) {
+      await client.query(
+        `insert into personal_tiendas (tienda, evaluador, auxiliares, orden)
+         values ($1, $2, $3::jsonb, $4)`,
+        [t.tienda, t.evaluador, JSON.stringify(t.auxiliares), i]
+      );
+    }
+    await client.query("commit");
+    return res.json({ ok: true, tiendas: limpias });
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    console.error(err);
+    return res.status(500).json({ error: "No se pudo guardar el personal." });
+  } finally {
+    client.release();
+  }
+});
+
+// Firmas de las personas pedidas: ?nombre=A&nombre=B. Pública, igual que la carpeta firmas/ del sitio.
+app.get("/api/firmas", async (req, res) => {
+  let nombres = req.query.nombre || [];
+  if (typeof nombres === "string") nombres = [nombres];
+  else if (!Array.isArray(nombres)) nombres = Object.values(nombres);
+  nombres = [...new Set(nombres.map(limpiarNombre).filter(Boolean))].slice(0, 80);
+  if (!nombres.length) return res.json({ firmas: {} });
+  try {
+    const { rows } = await pool.query(
+      "select nombre, imagen from firmas_personal where nombre = any($1)",
+      [nombres]
+    );
+    return res.json({ firmas: Object.fromEntries(rows.map((r) => [r.nombre, r.imagen])) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "No se pudieron obtener las firmas." });
+  }
+});
+
+// Guarda o reemplaza la firma de una persona. Body: { nombre, imagen: "data:image/png;base64,..." }
+app.put("/api/firmas", soloAdminEscritura, async (req, res) => {
+  const nombre = limpiarNombre(req.body && req.body.nombre);
+  const imagen = req.body && req.body.imagen;
+  if (!nombre) return res.status(400).json({ error: "Falta el nombre." });
+  if (typeof imagen !== "string" || !FIRMA_VALIDA.test(imagen)) {
+    return res.status(400).json({ error: "La firma debe ser una imagen PNG, JPG o WEBP." });
+  }
+  if (imagen.length > FIRMA_MAX) {
+    return res.status(413).json({ error: "La imagen de la firma es demasiado grande." });
+  }
+  try {
+    await pool.query(
+      `insert into firmas_personal (nombre, imagen) values ($1, $2)
+       on conflict (nombre) do update set imagen = excluded.imagen, actualizado_el = now()`,
+      [nombre, imagen]
+    );
+    return res.json({ ok: true, nombre });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "No se pudo guardar la firma." });
+  }
+});
+
+// Borra la firma guardada de una persona: ?nombre=
+app.delete("/api/firmas", soloAdminEscritura, async (req, res) => {
+  const nombre = limpiarNombre(req.query.nombre);
+  if (!nombre) return res.status(400).json({ error: "Falta el nombre." });
+  try {
+    await pool.query("delete from firmas_personal where nombre = $1", [nombre]);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "No se pudo borrar la firma." });
+  }
+});
+
+/* ===========================================================
    ARRANQUE: crea las tablas si no existen y levanta el servidor
    =========================================================== */
 const PORT = process.env.PORT || 3000;

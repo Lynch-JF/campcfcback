@@ -49,3 +49,21 @@ create table if not exists evaluaciones (
 alter table evaluaciones add column if not exists comentarios_evaluado text;
 
 create index if not exists idx_eval_tienda_periodo on evaluaciones (tienda, periodo);
+
+-- ===========================================================
+-- PERSONAL POR TIENDA Y FIRMAS (Panel de Gestión Humana)
+-- Mientras personal_tiendas esté vacía, la ficha usa la lista escrita en index.html.
+-- ===========================================================
+create table if not exists personal_tiendas (
+  tienda text primary key,
+  evaluador text,
+  auxiliares jsonb not null default '[]'::jsonb,
+  orden integer not null default 0,
+  actualizado_el timestamp with time zone default now()
+);
+
+create table if not exists firmas_personal (
+  nombre text primary key,
+  imagen text not null,
+  actualizado_el timestamp with time zone default now()
+);
